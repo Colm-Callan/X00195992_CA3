@@ -1,22 +1,45 @@
+# Minimal pipeline: Build + Test + Coverage + Artifact
+# Triggers on pushes and PRs to main & dev
+
+trigger:
+  branches:
+    include:
+      - main
+      - dev
+
+pr:
+  branches:
+    include:
+      - main
+      - dev
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  javaVersion: '21'
+
+stages:
 - stage: Build
+  displayName: 'Build & Test & Coverage'
   jobs:
   - job: BuildJob
-    displayName: 'Build & Test & Coverage'
+    displayName: 'Gradle build/test/coverage'
     steps:
     - task: JavaToolInstaller@0
+      displayName: 'Use Java 21'
       inputs:
-        versionSpec: '21'
+        versionSpec: '$(javaVersion)'
         jdkArchitectureOption: 'x64'
         jdkSourceOption: 'PreInstalled'
 
     - task: Gradle@3
       displayName: 'Gradle: clean test coverage shadowJar'
       inputs:
-        # IMPORTANT: no workingDirectory here
         gradleWrapperFile: 'gradlew'
         gradleOptions: '-Xmx1024m'
         javaHomeOption: 'JDKVersion'
-        jdkVersionOption: '21'
+        jdkVersionOption: '$(javaVersion)'
         jdkArchitectureOption: 'x64'
         publishJUnitResults: true
         testResultsFiles: |
@@ -39,6 +62,7 @@
           app/build/libs/*all.jar
           app/build/reports/jacoco/test/jacocoTestReport.xml
           app/build/test-results/test/*.xml
+          app/build/test-results/cucumber.xml
         targetFolder: '$(Build.ArtifactStagingDirectory)'
 
     - task: PublishBuildArtifacts@1
