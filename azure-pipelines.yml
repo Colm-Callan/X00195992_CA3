@@ -1,53 +1,104 @@
-pr:
-  branches:
-    include:
-      - main
-      - development
-
-
 trigger:
-  branches:
-    include:
-      - main
-      - development
+- main
+- dev
 
 pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  SONARCLOUD_ORG: 'colmcallan'
-  SONARCLOUD_PROJECT_KEY: 'Colm-Callan_DevOpsJavaCalc'
+  javaVersion: '21'
+  sonarToken: '$(SONAR_TOKEN)'   # Stored securely in pipeline variables
 
-steps:
-- task: Gradle@3
-  displayName: 'Gradle: clean test + jacoco report + sonar (enforce code coverage)'
-  inputs:
-    workingDirectory: 'app'
-    gradleWrapperFile: 'gradlew'
-    gradleOptions: '-Xmx3072m'
-    javaHomeOption: 'JDKVersion'
-    jdkVersionOption: '21'
-    jdkArchitectureOption: 'x64'
-    publishJUnitResults: true
-    testResultsFiles: '**/build/test-results/test/TEST-*.xml'
-    tasks: >
-      clean test jacocoTestReport jacocoTestCoverageVerification sonarqube
-      -Dsonar.host.url=https://sonarcloud.io
-      -Dsonar.organization=$(SONARCLOUD_ORG)
-      -Dsonar.projectKey=$(SONARCLOUD_PROJECT_KEY)
-      -Dsonar.login=$(SONAR_TOKEN)
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - task: JavaToolInstaller@0
+      inputs:
+        versionSpec: '$(javaVersion)'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
+    - task: Gradle@3
+      inputs:
+        workingDirectory: 'app'
+        gradleWrapperFile: 'gradlew'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '$(javaVersion)'
+        publishJUnitResults: true
+        testResultsFiles: '**/TEST-*.xml'
+        tasks: 'clean test jacocoTestReport shadowJar'
+    - task: CopyFiles@2
+      inputs:
+        contents: |
+          app/build/**
+        targetFolder: '$(Build.ArtifactStagingDirectory)'
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: 'build-outputs'
+    - task: PublishCodeCoverageResults@1
+      inputs:
+        codeCoverageTool: 'JaCoCo'
+        summaryFileLocation: 'app/build/reports/jacoco/test/jacocoTestReport.xml'
+        reportDirectory: 'app/build/reports/jacoco/test'
 
-- task: PublishTestResults@2
-  displayName: 'Publish JUnit test result'
-  inputs:
-    testResultsFormat: 'JUnit'
-    testResultsFiles: '**/build/test-results/test/TEST-*.xml'
-    failTaskOnFailedTests: true
+- stage: CodeAnalysis
+  dependsOn: Build
+  jobs:
+  - job: SonarCloudAnalysis
+    steps:
+    - task: DownloadBuildArtifacts@0
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'build-outputs'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+    - task: Gradle@3
+      inputs:
+        workingDirectory: 'app'
+        gradleWrapperFile: 'gradlew'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '$(javaVersion)'
+        tasks: 'sonarqube -Dsonar.login=$(sonarToken)'
+    - task: SonarCloudPublish@1
+      inputs:
+        pollingTimeoutSec: '300'
 
-- task: PublishCodeCoverageResults@1
-  displayName: 'Publish JaCoCo code coverage'
-  inputs:
-    codeCoverageTool: 'JaCoCo'
-    summaryFileLocation: 'app/build/reports/jacoco/test/jacocoTestReport.xml'
-    reportDirectory: 'app/build/reports/jacoco/test'
-    failIfCoverageEmpty: true
+- stage: SecurityScanning
+  dependsOn: CodeAnalysis
+  jobs:
+  - job: GitleaksScan
+    steps:
+    - checkout: self
+      fetchDepth: 0
+    - task: Gitleaks@3
+      inputs:
+        scanlocation: '$(Build.SourcesDirectory)'
+        configtype: 'predefined'
+        predefinedconfigfile: 'GitleaksUdmCombo.toml'
+        scanmode: 'smart'
+        taskfail: false
+        taskfailonexecutionerror: true
+        reportformat: 'sarif'
+        uploadresults: true
+        reportartifactname: 'CodeAnalysisLogs'
+        redact: true
+
+- stage: DependencySecurity
+  dependsOn: SecurityScanning
+  jobs:
+  - job: OWASPCheck
+    steps:
+    - task: dependency-check-build-task@6
+      inputs:
+        projectName: '$(Build.Repository.Name)'
+        scanPath: '$(System.DefaultWorkingDirectory)'
+        format: 'HTML'
+        uploadReports: true
+        uploadSARIFReport: true
+        # failOnCVSS: '7'
+        nvdApiKey: '$(NVD_API_KEY)'
+        additionalArguments: >
+          --disableCentral
+          --disableOssIndex
