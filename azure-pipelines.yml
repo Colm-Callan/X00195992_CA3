@@ -1,53 +1,81 @@
-pr:
-  branches:
-    include:
-      - main
-      - development
-
-
 trigger:
-  branches:
-    include:
-      - main
-      - development
+- main
 
 pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  SONARCLOUD_ORG: 'colmcallan'
-  SONARCLOUD_PROJECT_KEY: 'Colm-Callan_DevOpsJavaCalc'
+  javaVersion: '21'
 
-steps:
-- task: Gradle@3
-  displayName: 'Gradle: clean test + jacoco report + sonar (enforce code coverage)'
-  inputs:
-    workingDirectory: 'app'
-    gradleWrapperFile: 'gradlew'
-    gradleOptions: '-Xmx3072m'
-    javaHomeOption: 'JDKVersion'
-    jdkVersionOption: '21'
-    jdkArchitectureOption: 'x64'
-    publishJUnitResults: true
-    testResultsFiles: '**/build/test-results/test/TEST-*.xml'
-    tasks: >
-      clean test jacocoTestReport jacocoTestCoverageVerification sonarqube
-      -Dsonar.host.url=https://sonarcloud.io
-      -Dsonar.organization=$(SONARCLOUD_ORG)
-      -Dsonar.projectKey=$(SONARCLOUD_PROJECT_KEY)
-      -Dsonar.login=$(SONAR_TOKEN)
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - task: JavaToolInstaller@0
+      inputs:
+        versionSpec: '$(javaVersion)'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
 
-- task: PublishTestResults@2
-  displayName: 'Publish JUnit test result'
-  inputs:
-    testResultsFormat: 'JUnit'
-    testResultsFiles: '**/build/test-results/test/TEST-*.xml'
-    failTaskOnFailedTests: true
+    - task: Gradle@3
+      displayName: 'Gradle: Build + Test + Coverage'
+      inputs:
+        workingDirectory: 'app'
+        gradleWrapperFile: 'gradlew'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '$(javaVersion)'
+        jdkArchitectureOption: 'x64'
+        publishJUnitResults: true
+        testResultsFiles: |
+          **/test-results/test/TEST-*.xml
+          **/test-results/cucumber.xml
+        tasks: 'clean test jacocoTestReport jacocoTestCoverageVerification shadowJar'
 
-- task: PublishCodeCoverageResults@1
-  displayName: 'Publish JaCoCo code coverage'
-  inputs:
-    codeCoverageTool: 'JaCoCo'
-    summaryFileLocation: 'app/build/reports/jacoco/test/jacocoTestReport.xml'
-    reportDirectory: 'app/build/reports/jacoco/test'
-    failIfCoverageEmpty: true
+    - task: PublishCodeCoverageResults@1
+      displayName: 'Publish JaCoCo coverage'
+      inputs:
+        codeCoverageTool: 'JaCoCo'
+        summaryFileLocation: 'app/build/reports/jacoco/test/jacocoTestReport.xml'
+        reportDirectory: 'app/build/reports/jacoco/test'
+        failIfCoverageEmpty: true
+
+    - task: CopyFiles@2
+      displayName: 'Copy build outputs'
+      inputs:
+        contents: |
+          app/build/**
+        targetFolder: '$(Build.ArtifactStagingDirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish build-outputs artifact'
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: 'build-outputs'
+
+- stage: CodeAnalysis
+  displayName: 'SonarCloud Code Analysis'
+  dependsOn: Build
+  jobs:
+  - job: SonarAnalysis
+    steps:
+    - task: DownloadBuildArtifacts@0
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'build-outputs'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+
+    - task: Gradle@3
+      displayName: 'Run SonarCloud (Gradle)'
+      inputs:
+        workingDirectory: 'app'
+        gradleWrapperFile: 'gradlew'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '$(javaVersion)'
+        tasks: 'sonarqube -Dsonar.login=$(SONAR_TOKEN)'
+
+    - script: |
+        echo "View analysis at:"
+        echo "https://sonarcloud.io/project/overview?id=X00195992_CA3"
+      displayName: 'SonarCloud link'
