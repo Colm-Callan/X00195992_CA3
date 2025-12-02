@@ -70,3 +70,41 @@ stages:
       inputs:
         pathToPublish: '$(Build.ArtifactStagingDirectory)'
         artifactName: 'build-outputs'
+
+- stage: CodeAnalysis
+  displayName: 'SonarCloud Code Analysis'
+  dependsOn: Build
+  jobs:
+  - job: SonarAnalysis
+    displayName: 'Run SonarCloud (Gradle)'
+    steps:
+    - checkout: self
+      fetchDepth: 0
+
+    - task: DownloadBuildArtifacts@0
+      displayName: 'Download build outputs'
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'build-outputs'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+
+    - task: Gradle@3
+      displayName: 'Gradle: sonarqube (using downloaded reports)'
+      inputs:
+        workingDirectory: 'app'
+        gradleWrapperFile: 'gradlew'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '$(javaVersion)'
+        jdkArchitectureOption: 'x64'
+        tasks: >
+          sonarqube
+          -Dsonar.login=$(SONAR_TOKEN)
+          -Dsonar.gradle.skipCompile=true
+          -Dsonar.java.binaries=$(System.DefaultWorkingDirectory)/build-outputs/app/build/classes/java/main
+          -Dsonar.coverage.jacoco.xmlReportPaths=$(System.DefaultWorkingDirectory)/build-outputs/app/build/reports/jacoco/test/jacocoTestReport.xml
+
+    - script: |
+        echo "SonarCloud dashboard:"
+        echo "https://sonarcloud.io/project/overview?id=X00195992_CA3"
+      displayName: 'Echo SonarCloud URL'
