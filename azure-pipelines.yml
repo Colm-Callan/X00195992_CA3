@@ -1,6 +1,3 @@
-# Minimal pipeline: Build + Test + Coverage + Artifact
-# Triggers on pushes and PRs to main & dev
-
 trigger:
   branches:
     include:
@@ -18,6 +15,7 @@ pool:
 
 variables:
   javaVersion: '21'
+
 
 stages:
 - stage: Build
@@ -56,17 +54,18 @@ stages:
         failIfCoverageEmpty: true
 
     - task: CopyFiles@2
-      displayName: 'Copy build outputs'
+      displayName: 'Stage build outputs (jar, coverage, test XML, classes)'
       inputs:
         contents: |
           app/build/libs/*all.jar
           app/build/reports/jacoco/test/jacocoTestReport.xml
           app/build/test-results/test/*.xml
           app/build/test-results/cucumber.xml
+          app/build/classes/java/main/**            # <-- add compiled classes
         targetFolder: '$(Build.ArtifactStagingDirectory)'
 
     - task: PublishBuildArtifacts@1
-      displayName: 'Publish build-outputs artifact'
+      displayName: 'Publish artifact: build-outputs'
       inputs:
         pathToPublish: '$(Build.ArtifactStagingDirectory)'
         artifactName: 'build-outputs'
@@ -90,21 +89,20 @@ stages:
         downloadPath: '$(System.DefaultWorkingDirectory)'
 
     - task: Gradle@3
-      displayName: 'Gradle: sonarqube (using downloaded reports)'
+      displayName: 'Gradle: sonarqube'
       inputs:
-        workingDirectory: 'app'
         gradleWrapperFile: 'gradlew'
         javaHomeOption: 'JDKVersion'
         jdkVersionOption: '$(javaVersion)'
         jdkArchitectureOption: 'x64'
         tasks: >
-          sonarqube
+          :app:sonarqube
           -Dsonar.login=$(SONAR_TOKEN)
           -Dsonar.gradle.skipCompile=true
           -Dsonar.java.binaries=$(System.DefaultWorkingDirectory)/build-outputs/app/build/classes/java/main
           -Dsonar.coverage.jacoco.xmlReportPaths=$(System.DefaultWorkingDirectory)/build-outputs/app/build/reports/jacoco/test/jacocoTestReport.xml
 
     - script: |
-        echo "SonarCloud dashboard:"
+        echo "SonarCloud project dashboard:"
         echo "https://sonarcloud.io/project/overview?id=X00195992_CA3"
       displayName: 'Echo SonarCloud URL'
