@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Calculator UI</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Calculator</h1>
+
+    <div class="row">
+      <input id="a" type="number" placeholder="First number" value="2" />
+      <input id="b" type="number" placeholder="Second number" value="3" />
+    </div>
+
+    <div class="buttons">
+      <button onclick="callApi('add')">Add</button>
+      <button onclick="callApi('subtract')">Subtract</button>
+      <button onclick="callApi('multiply')">Multiply</button>
+      <button onclick="callApi('divide')">Divide</button>
+    </div>
+
+    <div id="result" class="result">Result will appear here</div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

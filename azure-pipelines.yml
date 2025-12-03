@@ -15,7 +15,8 @@ pool:
 
 variables:
   javaVersion: '21'
-
+  azureSubscription: 'AzureRM-x00195992'
+  webAppTest: 'app-x00195992-ca3-test'
 
 stages:
 - stage: Build
@@ -61,8 +62,24 @@ stages:
           app/build/reports/jacoco/test/jacocoTestReport.xml
           app/build/test-results/test/*.xml
           app/build/test-results/cucumber.xml
-          app/build/classes/java/main/**            # <-- add compiled classes
+          app/build/classes/java/main/**
         targetFolder: '$(Build.ArtifactStagingDirectory)'
+
+    - task: CopyFiles@2
+      displayName: 'Copy startup script into artifact'
+      inputs:
+        sourceFolder: '$(Build.SourcesDirectory)'
+        contents: 'azure/startup.sh'
+        targetFolder: '$(Build.ArtifactStagingDirectory)'
+
+    - bash: |
+        set -euo pipefail
+        if [ -f "$(Build.ArtifactStagingDirectory)/startup.sh" ]; then
+          chmod +x "$(Build.ArtifactStagingDirectory)/startup.sh"
+        fi
+        echo "Staged artifact contents:"
+        ls -R "$(Build.ArtifactStagingDirectory)"
+      displayName: 'Make startup.sh executable and list artifact'
 
     - task: PublishBuildArtifacts@1
       displayName: 'Publish artifact: build-outputs'
@@ -88,7 +105,6 @@ stages:
         artifactName: 'build-outputs'
         downloadPath: '$(System.DefaultWorkingDirectory)'
 
-    # Optional: list artifact contents for sanity
     - script: |
         echo "Listing downloaded artifact:"
         ls -R "$(System.DefaultWorkingDirectory)/build-outputs"
@@ -112,3 +128,59 @@ stages:
         echo "SonarCloud project dashboard:"
         echo "https://sonarcloud.io/project/overview?id=X00195992_CA3"
       displayName: 'Echo SonarCloud URL'
+
+- stage: Deploy_Test
+  displayName: 'Deploy to Test Web App'
+  dependsOn: CodeAnalysis
+  jobs:
+  - deployment: deploy_test
+    displayName: 'Deploy to Azure Web App (Test)'
+    environment: 'Test'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: build-outputs
+
+          - bash: |
+              set -euo pipefail
+              echo "Preparing site package..."
+              PACKAGE_DIR="$(Build.ArtifactStagingDirectory)/site"
+              mkdir -p "$PACKAGE_DIR/app/build/libs"
+
+              # Copy JAR from downloaded artifact into package location
+              # Adjust pattern if your jar name differs
+              cp "$(Pipeline.Workspace)/build-outputs/app/build/libs/"*all.jar "$PACKAGE_DIR/app/build/libs/calculator-all.jar" || {
+                echo "ERROR: jar not found in downloaded artifact"; ls -R "$(Pipeline.Workspace)/build-outputs/app/build/libs"; exit 1
+              }
+
+              # Copy startup script from artifact root into package root
+              if [ -f "$(Pipeline.Workspace)/build-outputs/startup.sh" ]; then
+                cp "$(Pipeline.Workspace)/build-outputs/startup.sh" "$PACKAGE_DIR/startup.sh"
+                chmod +x "$PACKAGE_DIR/startup.sh"
+              else
+                echo "WARNING: startup.sh not found in artifact; ensure it's staged in Build job"
+              fi
+
+              echo "Package contents:"
+              ls -R "$PACKAGE_DIR"
+            displayName: 'Prepare site package'
+
+          - task: ArchiveFiles@2
+            displayName: 'Create site zip'
+            inputs:
+              rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/site'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(Build.ArtifactStagingDirectory)/site.zip'
+              replaceExistingArchive: true
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy site.zip to Azure Web App (Test)'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appName: '$(webAppTest)'
+              package: '$(Build.ArtifactStagingDirectory)/site.zip'
+              appType: 'webAppLinux'
+              startupCommand: 'bash startup.sh'
